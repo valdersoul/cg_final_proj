@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three.js webgl - geometry - minecraft - ao</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				color: #61443e;
+				font-family:Monospace;
+				font-size:13px;
+				text-align:center;
+
+				/* background-color: #bfd1e5; */
+				background-color: #ffffff;
+				margin: 0px;
+				overflow: hidden;
+			}
+
+			a {	color: #a06851;	}
+
+			#info {
+				position: absolute;
+				top: 0px; width: 100%;
+				padding: 5px;
+			}
+
+			#oldie {
+				background:rgb(100,0,0) !important;
+				color:#fff !important;
+				margin-top:10em !important;
+			}
+			#oldie a { color:#fff }
+
+		</style>
+	</head>
+	<body>
+
+		<div id="container"><br /><br /><br /><br /><br />Generating world...</div>
+
+		<script src="js/three.min.js"></script>
+
+		<script src="js/controls/FirstPersonControls.js"></script>
+
+		<script src="js/ImprovedNoise.js"></script>
+
+		<script src="js/Detector.js"></script>
+		<script src="js/stats.min.js"></script>
+		
+		<script id = "vertexShader" type = "x-shader/x-vertex">
+		
+			varying vec3 vnormal;
+			varying vec2 vuv;
+			varying float depth;
+			
+			void main(){
+				depth = length(modelViewMatrix * vec4(position, 1.0));
+				vnormal = normal;
+				vuv = uv;
+				gl_Position = projectionMatrix * modelViewMatrix * vec4(position , 1.0);
+			}
+			
+		</script>
+		
+		<script id = "fragmentShader" type = "x-shader/x-fragment">
+		
+			struct SHC{
+    			vec3 L00, L1m1, L10, L11, L2m2, L2m1, L20, L21, L22;
+			};
+			
+			SHC groove = SHC(
+				vec3( 0.3783264,  0.4260425,  0.4504587),
+				vec3( 0.2887813,  0.3586803,  0.4147053),
+				vec3( 0.0379030,  0.0295216,  0.0098567),
+				vec3(-0.1033028, -0.1031690, -0.0884924),
+				vec3(-0.0621750, -0.0554432, -0.0396779),
+				vec3( 0.0077820, -0.0148312, -0.0471301),
+				vec3(-0.0935561, -0.1254260, -0.1525629),
+				vec3(-0.0572703, -0.0502192, -0.0363410),
+				vec3( 0.0203348, -0.0044201, -0.0452180)
+			);
+			
+			SHC beach = SHC(
+				vec3( 0.6841148,  0.6929004,  0.7069543),
+				vec3( 0.3173355,  0.3694407,  0.4406839),
+				vec3(-0.1747193, -0.1737154, -0.1657420),
+				vec3(-0.4496467, -0.4155184, -0.3416573),
+				vec3(-0.1690202, -0.1703022, -0.1525870),
+				vec3(-0.0837808, -0.0940454, -0.1027518),
+				vec3(-0.0319670, -0.0214051, -0.0147691),
+				vec3( 0.1641816,  0.1377558,  0.1010403),
+				vec3( 0.3697189,  0.3097930,  0.2029923)
+			);
+			
+			SHC tomb = SHC(
+				vec3( 1.0351604,  0.7603549,  0.7074635),
+				vec3( 0.4442150,  0.3430402,  0.3403777),
+				vec3(-0.2247797, -0.1828517, -0.1705181),
+				vec3( 0.7110400,  0.5423169,  0.5587956),
+				vec3( 0.6430452,  0.4971454,  0.5156357),
+				vec3(-0.1150112, -0.0936603, -0.0839287),
+				vec3(-0.3742487, -0.2755962, -0.2875017),
+				vec3(-0.1694954, -0.1343096, -0.1335315),
+				vec3( 0.5515260,  0.4222179,  0.4162488)
+			);
+			
+			vec3 sh_light(vec3 normal, SHC l){
+				float x = normal.x;
+				float y = normal.y; 
+				float z = normal.z; 
+			
+				const float C1 = 0.429043;
+				const float C2 = 0.511664;
+				const float C3 = 0.743125;
+				const float C4 = 0.886227;
+				const float C5 = 0.247708;
+				
+				return (
+					C1 * l.L22 * (x * x - y * y) +
+					C3 * l.L20 * z * z +
+					C4 * l.L00 -
+					C5 * l.L20 +
+					2.0 * C1 * l.L2m2 * x * y +
+					2.0 * C1 * l.L21  * x * z +
+					2.0 * C1 * l.L2m1 * y * z +
+					2.0 * C2 * l.L11  * x +
+					2.0 * C2 * l.L1m1 * y +
+					2.0 * C2 * l.L10  * z
+				);
+			}
+			
+			vec3 gamma(vec3 color){
+    			return pow(color, vec3(1.0/2.0));
+			}
+			
+			vec3 fog(vec3 color, vec3 fcolor, float depth, float density){
+				const float e = 2.71828182845904523536028747135266249;
+				float f = pow(e, -pow(depth*density, 2.0));
+				return mix(fcolor, color, f);
+			}
+			
+			mat3 transpose(mat3 inMatrix){
+				vec3 i0 = inMatrix[0];
+				vec3 i1 = inMatrix[1];
+				vec3 i2 = inMatrix[2];
+				
+				mat3 outMatrix;
+				outMatrix[0] = vec3(i0.x, i1.x, i2.x);
+				outMatrix[1] = vec3(i0.y, i1.y, i2.y);
+				outMatrix[2] = vec3(i0.z, i1.z, i2.z);
+				
+				return outMatrix;
+			}
+			
+			varying vec3 vnormal;
+			varying vec2 vuv;
+			varying float depth;
+
+			uniform sampler2D texture;
+			uniform sampler2D normaltexture;
+
+			
+			void main(){
+				vec3 map_normal = normalize(texture2D(normaltexture, vuv).rgb);
+				vec3 s,t;
+				float bug = 0.0;
+				
+				if(vnormal.x > 0.9){
+					s = vec3(0,1,0);
+					t = vec3(0,0,1);
+				}
+				if(vnormal.x < -0.9){
+					s = vec3(0,0,1);
+					t = vec3(0,1,0);
+				}
+				if(vnormal.y > 0.9){
+					s = vec3(1,0,0);
+					t = vec3(0,0,1);
+				}
+				if(vnormal.y < -0.9){
+					s = vec3(0,0,1);
+					t = vec3(1,0,0);
+				}
+				if(vnormal.z > 0.9){
+					s = vec3(1,0,0);
+					t = vec3(0,1,0);
+				}
+				if(vnormal.z < -0.9){
+					s = vec3(0,1,0);
+					t = vec3(1,0,0);
+				}
+				
+				vec3 frag_normal = normalize( map_normal * transpose( mat3(s, vnormal, t) ));
+				vec3 outside = sh_light(frag_normal, beach);
+				
+				vec3 color = texture2D(texture, vuv).rgb * outside;
+				vec3 at_observer = fog(color, vec3(0.8), depth, 0.00025);
+				at_observer.x += bug;
+				gl_FragColor = vec4(at_observer, 1.0);
+			}
+			
+		</script>
+
+		<script>
+
+			if ( ! Detector.webgl ) {
+
+				Detector.addGetWebGLMessage();
+				document.getElementById( 'container' ).innerHTML = "";
+
+			}
+			var AIR = 0;
+			var ROCK = 1;
+			var GEMS = 2;
+			var DIRT = 3;
+			var GRASS = 4;
+			var LAVA = 5;
+
+
+			var container, stats;
+
+			var camera, controls, scene, renderer;
+
+			var planesize = 100;
+			var size = 128;
+			var data = new Array(size * size * size).join('0').split('').map(parseFloat);
+			
+			var perlin = new ImprovedNoise();
+			
+			var cube = {data : 1.0, cave : true}; 
+			var cube_data = [];
+			cube_data[0] = cube;
+			
+			generateHeight( size, data );
+			cake_dirt( size, data);
+			add_gems( size, data);
+			add_lava( size, data);
+			deleta_solitary(size, data);
+			var clock = new THREE.Clock();
+
+			init();
+			animate();
+
+			function init() {
+
+				container = document.getElementById( 'container' );
+
+				camera = new THREE.PerspectiveCamera( 88, window.innerWidth / window.innerHeight, 1, 20000 );
+				camera.position.x = planesize * size / 2;
+				camera.position.y = planesize * size ;
+				
+				controls = new THREE.FirstPersonControls( camera );
+
+				controls.movementSpeed = 1000;
+				controls.lookSpeed = 0.060;
+				controls.lookVertical = true;
+				controls.constrainVertical = true;
+				controls.verticalMin = 1.1;
+				controls.verticalMax = 2.2;
+
+				scene = new THREE.Scene();
+				
+
+				var matrix = new THREE.Matrix4();
+
+				var pxGeometry = new THREE.PlaneGeometry( planesize, planesize );
+				pxGeometry.rotateY( -Math.PI / 2 );
+				pxGeometry.translate( planesize / 2.0, 0, 0 );
+
+				var nxGeometry = new THREE.PlaneGeometry( planesize, planesize );
+				nxGeometry.rotateY(  Math.PI / 2 );
+				nxGeometry.translate( - planesize / 2.0, 0, 0 );
+
+				var pyGeometry = new THREE.PlaneGeometry( planesize, planesize );
+				pyGeometry.rotateX( Math.PI / 2 );
+				pyGeometry.translate( 0, planesize / 2.0, 0 );
+				
+				var nyGeometry = new THREE.PlaneGeometry(planesize, planesize);
+				nyGeometry.rotateX(-Math.PI / 2);
+				nyGeometry.translate(0, -planesize / 2.0, 0);
+
+				var pzGeometry = new THREE.PlaneGeometry( planesize, planesize );
+				pzGeometry.translate( 0, 0, -planesize / 2.0 );
+
+				var nzGeometry = new THREE.PlaneGeometry( planesize, planesize );
+				nzGeometry.rotateX(Math.PI);
+				nzGeometry.translate( 0, 0,  planesize / 2.0 );
+
+				//
+
+				var geometry_grass = new THREE.Geometry();
+				var geometry_rock = new THREE.Geometry();
+				var geometry_dirt = new THREE.Geometry();
+				var geometry_lava = new THREE.Geometry();
+				var geometry_gems = new THREE.Geometry();
+				
+				var rock = 0;
+				
+				for ( x = 0; x < size; x++){
+					for ( y = 0; y < size; y++){
+						for ( z = 0; z < size; z++){
+							
+							matrix.makeTranslation(x*planesize, y*planesize, -z*planesize);
+							
+							if(get(x, y, z) == 0){
+								value = get(x - 1, y, z);
+								if(value == ROCK){
+									rock++;
+									geometry_rock.merge(nxGeometry, matrix);
+								}
+								else if(value == DIRT){
+									geometry_dirt.merge(nxGeometry, matrix);
+								}
+								else if(value == LAVA){
+									geometry_lava.merge(nxGeometry, matrix);
+								}
+								else if(value == GEMS){
+									geometry_gems.merge(nxGeometry, matrix);
+								}
+								
+								value = get(x + 1, y, z);
+								if( value == ROCK){
+									rock++;
+									geometry_rock.merge(pxGeometry, matrix);
+								}
+								else if(value == DIRT){
+									geometry_dirt.merge(pxGeometry, matrix);
+								}
+								else if(value == LAVA){
+									geometry_lava.merge(pxGeometry, matrix);
+								}
+								else if(value == GEMS){
+									geometry_gems.merge(pxGeometry, matrix);
+								}
+
+								value = get(x, y - 1, z);
+								if (value == ROCK){
+									rock++;
+									geometry_rock.merge(nyGeometry, matrix);
+								}
+								else if (value == DIRT){
+									geometry_grass.merge(nyGeometry, matrix);
+								}
+								else if(value == LAVA){
+									geometry_lava.merge(nyGeometry, matrix);
+								}
+								else if(value == GEMS){
+									geometry_gems.merge(nyGeometry, matrix);
+								}
+
+								value = get(x, y + 1, z);
+								if( value == ROCK){
+									rock++;
+									geometry_rock.merge(pyGeometry,  matrix);
+								}
+								else if(value == DIRT){
+									geometry_dirt.merge(pyGeometry,  matrix);
+								}
+								else if(value == LAVA){
+									geometry_lava.merge(pyGeometry, matrix);
+								}
+								else if(value == GEMS){
+									geometry_gems.merge(pyGeometry, matrix);
+								}
+								
+								value = get(x , y, z - 1);
+								if( value == ROCK){
+									rock++;
+									geometry_rock.merge(nzGeometry,  matrix);
+								}
+								else if(value == DIRT){
+									geometry_dirt.merge(nzGeometry,  matrix);
+								}
+								else if(value == LAVA){
+									geometry_lava.merge(nzGeometry, matrix);
+								}
+								else if(value == GEMS){
+									geometry_gems.merge(nzGeometry, matrix);
+								}
+
+								value = get(x , y, z + 1);
+								if( value == ROCK){
+									rock++;
+									geometry_rock.merge(pzGeometry,  matrix);
+								}
+								else if(value == DIRT){
+									geometry_dirt.merge(pzGeometry,  matrix);
+								}
+								else if(value == LAVA){
+									geometry_lava.merge(pzGeometry, matrix);
+								}
+								else if(value == GEMS){
+									geometry_gems.merge(pzGeometry, matrix);
+								}	
+							}
+						}
+					}
+				}
+
+				var texture_grass = THREE.ImageUtils.loadTexture( 'textures/grass_material.png' );
+				texture_grass.magFilter = THREE.LinearFilter;
+				texture_grass.minFilter = THREE.LinearMipMapLinearFilter;
+				var normal_grass = THREE.ImageUtils.loadTexture( 'textures/grass_terrain.png' );
+				normal_grass.magFilter = THREE.LinearFilter;
+				normal_grass.minFilter = THREE.LinearMipMapLinearFilter;
+				
+				var texture_rock = THREE.ImageUtils.loadTexture( 'textures/rock_material.png' );
+				texture_rock.magFilter = THREE.LinearFilter;
+				texture_rock.minFilter = THREE.LinearMipMapLinearFilter;
+				var normal_rock = THREE.ImageUtils.loadTexture( 'textures/rock_terrain.png' );
+				normal_rock.magFilter = THREE.LinearFilter;
+				normal_rock.minFilter = THREE.LinearMipMapLinearFilter;
+				
+				var texture_dirt = THREE.ImageUtils.loadTexture( 'textures/dirt_material.png' );
+				texture_dirt.magFilter = THREE.LinearFilter;
+				texture_dirt.minFilter = THREE.LinearMipMapLinearFilter;
+				var normal_dirt = THREE.ImageUtils.loadTexture( 'textures/dirt_terrain.png' );
+				normal_dirt.magFilter = THREE.LinearFilter;
+				normal_dirt.minFilter = THREE.LinearMipMapLinearFilter;
+				
+				var texture_lava = THREE.ImageUtils.loadTexture( 'textures/lava_material.png' );
+				texture_lava.magFilter = THREE.LinearFilter;
+				texture_lava.minFilter = THREE.LinearMipMapLinearFilter;
+				var normal_lava = THREE.ImageUtils.loadTexture( 'textures/lava_terrain.png' );
+				normal_lava.magFilter = THREE.LinearFilter;
+				normal_lava.minFilter = THREE.LinearMipMapLinearFilter;
+				
+				var texture_gems = THREE.ImageUtils.loadTexture( 'textures/gems_material.png' );
+				texture_gems.magFilter = THREE.LinearFilter;
+				texture_gems.minFilter = THREE.LinearMipMapLinearFilter;
+				var normal_gems = THREE.ImageUtils.loadTexture( 'textures/gems_terrain.png' );
+				normal_gems.magFilter = THREE.LinearFilter;
+				normal_gems.minFilter = THREE.LinearMipMapLinearFilter;
+				
+				var mesh_grass = new THREE.Mesh(geometry_grass, new THREE.ShaderMaterial({
+					uniforms : {
+						texture : {type : "t", value : texture_grass},
+						normaltexture : {type : "t", value : normal_grass}
+					},
+					vertexShader : document.getElementById('vertexShader').textContent,
+					fragmentShader : document.getElementById('fragmentShader').textContent	
+				}));
+				var mesh_rock = new THREE.Mesh(geometry_rock, new THREE.ShaderMaterial({
+					uniforms : {
+						texture : {type : "t", value : texture_rock},
+						normaltexture : {type : "t", value : normal_rock}
+					},
+					vertexShader : document.getElementById('vertexShader').textContent,
+					fragmentShader : document.getElementById('fragmentShader').textContent	
+				}));
+				var mesh_dirt = new THREE.Mesh(geometry_dirt, new THREE.ShaderMaterial({
+					uniforms : {
+						texture : {type : "t", value : texture_dirt},
+						normaltexture : {type : "t", value : normal_dirt}
+					},
+					vertexShader : document.getElementById('vertexShader').textContent,
+					fragmentShader : document.getElementById('fragmentShader').textContent	
+				}));
+				var mesh_lava = new THREE.Mesh(geometry_lava, new THREE.ShaderMaterial({
+					uniforms : {
+						texture : {type : "t", value : texture_lava},
+						normaltexture : {type : "t", value : normal_lava}
+					},
+					vertexShader : document.getElementById('vertexShader').textContent,
+					fragmentShader : document.getElementById('fragmentShader').textContent	
+				}));
+				var mesh_gems = new THREE.Mesh(geometry_gems, new THREE.ShaderMaterial({
+					uniforms : {
+						texture : {type : "t", value : texture_gems},
+						normaltexture : {type : "t", value : normal_gems}
+					},
+					vertexShader : document.getElementById('vertexShader').textContent,
+					fragmentShader : document.getElementById('fragmentShader').textContent	
+				}));
+				
+				
+				scene.add( mesh_grass );
+				scene.add( mesh_rock  );
+				scene.add( mesh_dirt  );
+				scene.add( mesh_lava  );
+				scene.add( mesh_gems  );
+
+				renderer = new THREE.WebGLRenderer();
+				renderer.setClearColor( 0xffffff );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+				container.innerHTML = "";
+
+				container.appendChild( renderer.domElement );
+
+				stats = new Stats();
+				stats.domElement.style.position = 'absolute';
+				stats.domElement.style.top = '0px';
+				container.appendChild( stats.domElement );
+
+				//
+
+				window.addEventListener( 'resize', onWindowResize, false );
+
+			}
+			
+			function generateRays(N, rays){
+				N = N * 1.0;
+				var off = 2.0 / N;
+				var inc = Math.PI * (3 - Math.sqrt(5));
+				
+				for(k = 0; k < N; k++){
+					var y = k * off - 1 + off / 2;
+					var r = Math.sqrt(1 - y*y);
+					var phi = k * inc;
+					
+					var origin = new THREE.Vector3(0,0,0);
+					var dir = new THREE.Vector3(Math.cos(phi) * r, y, Math.sin(phi) * r);
+					rays.push(new THREE.Ray(origin, dir));
+				}
+			}
+			
+			function onWindowResize() {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+				controls.handleResize();
+
+			}
+			
+			function generateHeight( size, data ) {
+				var caves, center_falloff, plateau_falloff, density;
+				var x, y, z;
+				var xf, yf, zf;
+
+				var start = 1;
+				var end = size-1;
+				
+				for(x=(start); x<(end); x++){
+					for(y=(start); y<(end); y++){
+						for(z=(start); z<(end); z++){
+							xf = x*1.0/ size;
+							yf = y*1.0/ size;
+							zf = z*1.0/ size;
+							if(yf <= 0.8){
+								plateau_falloff = 1.0;
+							}
+							else if(0.8 < yf && yf < 0.9){
+								plateau_falloff = 1.0-(yf-0.8)*10.0;
+							}
+							else{
+								plateau_falloff = 0.0;
+							}
+					
+							center_falloff = 0.1/(
+								Math.pow((xf-0.5)*1.2, 2.0) +
+								Math.pow((yf-1.0)*0.8, 2.0) +
+								Math.pow((zf-0.5)*1.2, 2.0)
+							);
+							caves = Math.pow(perlin.simplex_noise(1, xf*5, yf*5, zf*5), 3.0);
+							density = (
+								perlin.simplex_noise(5, xf, yf*0.5, zf) *
+								center_falloff *
+								plateau_falloff
+							);
+							density *= Math.pow(
+								perlin.noise((xf+1)*3.0, (yf+1)*3.0, (zf+1)*3.0)+0.4, 1.8
+							);
+							if(caves<0.5){
+								density = 0;
+							}
+							put(x, y, z, density>3.1 ? ROCK : 0);
+						}
+					}
+				}
+				console.log("rockdone!");
+			}
+			
+			function cake_dirt(size, data){
+				var value, ontop;
+				var start = 0;
+				var end = size;
+				for(x=(start); x<(end); x++){
+					for(y=(start); y<(end); y++){
+						for(z=(start); z<(end); z++){
+							value = get(x, y, z);
+							ontop = get(x, y+1, z);
+							if(value == 1 && ontop == 0){
+								put(x, y, z, DIRT);
+							}
+						}
+					}
+				}
+			}
+			
+			function add_gems(size, data){
+				var value;
+				var start = 0;
+				var end = size;
+				for(x=(start); x<(end); x++){
+					for(y=(start); y<(end); y++){
+						for(z=(start); z<(end); z++){
+							var xf=x * 1.0/size;
+                			var yf=y * 1.0/size;
+                			var zf=z * 1.0/size;
+							value = get(x, y, z);
+							if(value == ROCK){
+								if(perlin.simplex_noise(3, xf*10+3, yf*10+3, zf*10+3)>3.65){
+									put(x, y, z, GEMS);
+								}
+							}
+						}
+					}
+				}
+			}
+			
+			function add_lava(size, data){
+				var value, distance,n;
+				var start = 0, end = size;
+				for(x=(start); x<(end); x++){
+					for(y=(start); y<(end); y++){
+						for(z=(start); z<(end); z++){
+							var xf=x*1.0/size;
+                			var yf=y*1.0/size;
+                			var zf=z*1.0/size;
+							value = get(x,y,z);
+							distance = Math.sqrt(Math.pow((xf-0.5), 2) + Math.pow((yf-0.7), 2) + Math.pow((zf-0.5), 2));
+							if(value == ROCK){
+								n = perlin.simplex_noise(3, xf*10+4, yf*10+4, zf*10+4);
+								if(n > 3.2 && distance < 0.1){
+									put(x, y, z, LAVA);
+								}
+							}
+						}
+					}
+				}
+			}
+			
+			function deleta_solitary(size, data){
+				var start = 0, end = size;
+				for(x=(start); x<(end); x++){
+					for(y=(start); y<(end); y++){
+						for(z=(start); z<(end); z++){
+							if(!neighbors(size, data, x, y, z)){
+            					put(x, y, z, AIR);
+        					}
+						}
+					}
+				}
+			}
+			
+			function neighbors(size, data, x, y, z){
+				if(get(x-1,y,z)){return true;}
+				if(get(x+1,y,z)){return true;}
+				if(get(x,y-1,z)){return true;}
+				if(get(x,y+1,z)){return true;}
+				if(get(x,y,z-1)){return true;}
+				if(get(x,y,z+1)){return true;}
+				return false;
+			}
+			
+			function clamp(n, size){
+				if(n < 0){
+					return 0;
+				}
+				else if(n >= size){
+					return size - 1;
+				}
+				else{
+					return n;	
+				}
+			}
+			
+			function get( x, y, z ) {
+				return data[ clamp(x,size) + clamp(y, size)*size + clamp(z, size)*size*size ];
+			}
+			
+			function put(x, y, z, value){
+				 data[(x) + (y)*size + (z)*size*size] = value;
+			}
+
+			function animate() {
+
+				requestAnimationFrame( animate );
+
+				render();
+				stats.update();
+
+			}
+
+			function render() {
+
+				controls.update( clock.getDelta() );
+				renderer.render( scene, camera );
+
+			}
+
+		</script>
+
+	</body>
+</html>
